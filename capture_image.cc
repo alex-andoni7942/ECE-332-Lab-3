@@ -20,13 +20,14 @@
 #define IMAGE_SPAN (IMAGE_WIDTH * IMAGE_HEIGHT * 4)
 #define IMAGE_MASK (IMAGE_SPAN - 1)
 
-
-
+//volatile unsigned short (*pixels)[IMAGE_WIDTH] = (volatile unsigned short (*)[IMAGE_WIDTH])VIDEO_BASE;
+//volatile unsigned short char (*pixels_bw)[IMAGE_WIDTH] = (volatile unsigned char (*)[IMAGE_WIDTH])VIDEO_BASE;
 
 int main(void) {
     volatile unsigned int *video_in_dma = NULL;
     volatile unsigned int *key_ptr = NULL;
-    volatile unsigned short *video_mem = NULL;
+    volatile unsigned short *video_mem_ptr = NULL;
+    void *video_mem;
     void *virtual_base;
     int fd;
 
@@ -44,13 +45,20 @@ int main(void) {
         return 1;
     }
 
+    video_mem = mmap(NULL, IMAGE_SPAN, PROT_READ | PROT_WRITE, MAP_SHARED, fd, FPGA_ONCHIP_BASE);
+    if(video_mem == MAP_FAILED){
+        printf("video memory failed\n");
+        munmap(virtual_base, HW_REGS_SPAN);
+        close(fd);
+        return 1;
+    }
+
+
     // Calculate the virtual address where our device is mapped
-    video_in_dma = (unsigned int *)(virtual_base + ((VIDEO_BASE) & (HW_REGS_MASK)));
+    video_in_dma = (volatile unsigned int *)((char*)virtual_base + ((VIDEO_BASE) & (HW_REGS_MASK)));
+    key_ptr = (volatile unsigned int *)((char*)virtual_base + (PUSH_BASE & HW_REGS_MASK));
+    video_mem_ptr = (unsigned short *)(video_mem + (FPGA_ONCHIP_BASE & IMAGE_MASK));
 
-
-   
-
-    int value = *(video_in_dma+3);
 
     printf("Video In DMA register updated at:0%x\n",(video_in_dma));
 
@@ -58,34 +66,43 @@ int main(void) {
     *(video_in_dma+3) = 0x4;
     //*h2p_lw_led_addr = *h2p_lw_led_addr + 1;
 
-    value = *(video_in_dma+3);
+    while ((*key_ptr & 0x7) == 0x7){
+        usleep(10000);
+    }
+    *(video_in_dma+3) = 0x0;
+    usleep(10000);
 
-    printf("enabled video:0x%x\n",value);
+    short unsigned int pixels[IMAGE_HEIGHT][IMAGE_WIDTH];
+    for (int y = 0; y < IMAGE_HEIGHT; y++){
+        for (int x = 0; x < IMAGE_WIDTH; x++){
+                pixels[y][x] = *(video_mem_ptr + (y << 9) + x);
+        }
+    }
 
+    unsigned char pixels_bw[IMAGE_HEIGHT][IMAGE_WIDTH];
+    for (int y = 0; y < IMAGE_HEIGHT; y++){
+        for (int x = 0; x < IMAGE_WIDTH; x++){
+                pixels_bw[y][x] = *(video_mem_ptr + (y << 9) +x);
+        }
+    }
 
-    
-
-
-
-    //change 
-    const char* filename = "final_image_color.bmp";
+    //change
+    const char* filename = "final_image_color1.bmp";
 
     // Saving image as color
-    saveImageShort(filename,&pixels[0][0],320,240);
+    saveImageShort(filename,(const unsigned short*)&pixels[0][0],320,240);
 
-    const char* filename1 = "final_image_bw.bmp";
+    const char* filename1 = "final_image_bw1.bmp";
     //saving image as black and white
-    saveImageGrayscale(filename1,&pixels_bw[0][0],320,240);
+    saveImageGrayscale(filename1,(const unsigned char*)&pixels_bw[0][0],320,240);
 
 
     // Clean up
-    if (munmap(video_base, IMAGE_SPAN) != 0) {
+    if (munmap(virtual_base, IMAGE_SPAN) != 0) {
         printf("ERROR: munmap() failed...\n");
         close(fd);
         return 1;
     }
-
-
 
     close(fd);
     return 0;
